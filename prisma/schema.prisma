@@ -1,0 +1,212 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ AUTH ============
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  passwordHash  String?
+  emailVerified DateTime?
+  image         String?
+  twoFactorEnabled Boolean @default(false)
+  twoFactorSecret  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  memberships   Membership[]
+  ownedOrgs     Organization[] @relation("OrgOwner")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ============ ORGANIZATIONS ============
+model Organization {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  logo        String?
+  subdomain   String?  @unique
+  ownerId     String
+  owner       User     @relation("OrgOwner", fields: [ownerId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  memberships   Membership[]
+  policies      Policy[]
+  subscription  Subscription?
+  activityLogs  ActivityLog[]
+  consentRecords ConsentRecord[]
+}
+
+model Membership {
+  id        String   @id @default(cuid())
+  userId    String
+  orgId     String
+  role      String   // owner, admin, editor, viewer
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, orgId])
+}
+
+// ============ POLICIES ============
+model Policy {
+  id          String   @id @default(cuid())
+  orgId       String
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  name        String
+  type        String   // privacy, terms, eula, cookies
+  language    String   @default("en")
+  answers     Json
+  content     String   @db.Text
+  lawVersion  String?
+  hostedSlug  String?  @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  versions      PolicyVersion[]
+  translations  PolicyTranslation[]
+  cookieBanner  CookieBanner?
+  updateNotifications UpdateNotification[]
+}
+
+model PolicyVersion {
+  id        String   @id @default(cuid())
+  policyId  String
+  policy    Policy   @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  content   String   @db.Text
+  lawVersion String?
+  createdAt DateTime @default(now())
+}
+
+model PolicyTranslation {
+  id        String   @id @default(cuid())
+  policyId  String
+  policy    Policy   @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  language  String
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([policyId, language])
+}
+
+// ============ COOKIES & CONSENT ============
+model CookieBanner {
+  id          String   @id @default(cuid())
+  policyId    String   @unique
+  policy      Policy   @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  position    String   @default("bottom")
+  theme       Json
+  text        Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model ConsentRecord {
+  id          String   @id @default(cuid())
+  orgId       String
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  visitorId   String
+  consentGiven Json
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+}
+
+// ============ LAW UPDATES ============
+model LawVersion {
+  id            String   @id @default(cuid())
+  lawType       String   // gdpr, ccpa, coppa, etc.
+  version       String
+  description   String
+  requirements  Json
+  effectiveDate DateTime
+  createdAt     DateTime @default(now())
+
+  notifications UpdateNotification[]
+
+  @@unique([lawType, version])
+}
+
+model UpdateNotification {
+  id           String    @id @default(cuid())
+  policyId     String
+  policy       Policy    @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  lawVersionId String
+  lawVersion   LawVersion @relation(fields: [lawVersionId], references: [id])
+  status       String    // pending, viewed, applied, dismissed
+  createdAt    DateTime  @default(now())
+  viewedAt     DateTime?
+  appliedAt    DateTime?
+}
+
+// ============ PAYMENTS ============
+model Subscription {
+  id                   String    @id @default(cuid())
+  orgId                String    @unique
+  org                  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+  stripePriceId        String?
+  tier                 String    @default("free") // free, pro, business
+  status               String    @default("active") // active, canceled, past_due
+  currentPeriodEnd     DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+}
+
+// ============ ACTIVITY LOG ============
+model ActivityLog {
+  id         String   @id @default(cuid())
+  orgId      String
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  userId     String
+  action     String
+  resource   String
+  resourceId String?
+  details    Json?
+  createdAt  DateTime @default(now())
+}
